@@ -1,0 +1,5 @@
+/* globals.css */
+@import "antd/dist/reset.css"; /* Import reset styles dari Ant Design */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
