@@ -1,32 +1,30 @@
+// src/app/products/page.tsx
+
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import {
-  Card,
   Button,
-  Dropdown,
-  Menu,
-  Modal,
-  message,
   Pagination,
   Input,
   Select,
   Space,
+  message,
   Spin,
+  Modal,
+  Form,
 } from "antd";
-import {
-  DownOutlined,
-  ExclamationCircleOutlined,
-  SearchOutlined,
-} from "@ant-design/icons";
-import { useRouter } from "next/navigation";
-import Layout from "@/components/Layout";
-import Image from "next/image";
+import { SearchOutlined, ExclamationCircleOutlined } from "@ant-design/icons";
 import { debounce } from "lodash";
+import Layout from "@/components/Layout";
+import ProductCard from "./ProductCard";
+import ProductFormModal from "./ProductFormModal";
+import ProductActions from "./ProductActions";
+import { useRouter } from "next/navigation";
 
-const { confirm } = Modal;
 const { Option } = Select;
+const { confirm } = Modal;
 
 interface Product {
   id: number;
@@ -35,6 +33,7 @@ interface Product {
   categories: string;
   price: number;
   image: string;
+  description: string;
 }
 
 const Products: React.FC = () => {
@@ -44,6 +43,10 @@ const Products: React.FC = () => {
   const [pageSize, setPageSize] = useState<number>(10);
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [totalItems, setTotalItems] = useState<number>(0);
+  const [isModalVisible, setIsModalVisible] = useState<boolean>(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [uploadedImage, setUploadedImage] = useState<File | null>(null);
+  const [form] = Form.useForm();
   const router = useRouter();
 
   const apiUrl = process.env.NEXT_PUBLIC_URL_SERVER;
@@ -65,19 +68,13 @@ const Products: React.FC = () => {
       }
 
       const response = await axios.get(`${apiUrl}/products`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        params: {
-          search,
-          limit,
-          page,
-        },
+        headers: { Authorization: `Bearer ${token}` },
+        params: { search, limit, page },
       });
 
       setProducts(response.data.data);
-      setTotalItems(response.data.total); // Set total items for pagination
-      setCurrentPage(response.data.current_page); // Update current page
+      setTotalItems(response.data.total);
+      setCurrentPage(response.data.current_page);
     } catch (error) {
       console.error("Error fetching products:", error);
       message.error("Failed to load products");
@@ -131,9 +128,7 @@ const Products: React.FC = () => {
     try {
       const token = localStorage.getItem("token");
       await axios.delete(`${apiUrl}/products/${id}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
       });
       setProducts(products.filter((product) => product.id !== id));
       message.success("Product deleted successfully");
@@ -143,26 +138,73 @@ const Products: React.FC = () => {
     }
   };
 
-  const actionMenu = (id: number) => (
-    <Menu>
-      <Menu.Item key="detail" onClick={() => router.push(`/products/${id}`)}>
-        Detail
-      </Menu.Item>
-      <Menu.Item key="edit" onClick={() => router.push(`/products/${id}/edit`)}>
-        Edit
-      </Menu.Item>
-      <Menu.Item key="delete" onClick={() => showDeleteConfirm(id)}>
-        Delete
-      </Menu.Item>
-    </Menu>
-  );
+  const openCreateModal = () => {
+    form.resetFields();
+    setEditingProduct(null);
+    setUploadedImage(null);
+    setIsModalVisible(true);
+  };
+
+  const openEditModal = (id: number) => {
+    const product = products.find((p) => p.id === id) || null;
+    setEditingProduct(product);
+    form.setFieldsValue(product);
+    setUploadedImage(null); // Reset the uploaded image state for edit
+    setIsModalVisible(true);
+  };
+
+  const handleModalCancel = () => {
+    form.resetFields();
+    setEditingProduct(null);
+    setUploadedImage(null);
+    setIsModalVisible(false);
+  };
+
+  const handleFormSubmit = async (values: any) => {
+    try {
+      setLoading(true);
+      const token = localStorage.getItem("token");
+
+      const formData = new FormData();
+      formData.append("name", values.name);
+      formData.append("sku", values.sku);
+      formData.append("categories", values.categories);
+      formData.append("price", values.price);
+      formData.append("description", values.description);
+
+      // Append the image file if it exists
+      if (uploadedImage) {
+        formData.append("image", uploadedImage);
+      }
+
+      if (editingProduct) {
+        await axios.post(`${apiUrl}/products/${editingProduct.id}`, formData, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        message.success("Product updated successfully");
+      } else {
+        await axios.post(`${apiUrl}/products`, formData, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        message.success("Product created successfully");
+      }
+
+      fetchProducts(searchTerm, currentPage, pageSize);
+      handleModalCancel();
+    } catch (error) {
+      console.error("Error saving product:", error);
+      message.error("Failed to save product");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <Layout>
       <h1 className="text-3xl font-bold mb-6">Products</h1>
 
       <div className="flex justify-between mb-4">
-        <Button type="primary" onClick={() => router.push("/products/create")}>
+        <Button type="primary" onClick={openCreateModal}>
           Create Product
         </Button>
 
@@ -196,43 +238,17 @@ const Products: React.FC = () => {
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {products.map((product) => (
-              <Card
+              <ProductCard
                 key={product.id}
-                cover={
-                  <Image
-                    src={
-                      product.image
-                        ? `${imageUrl}/${product.image}`
-                        : "/images/no-pictures.png"
-                    }
-                    alt="product"
-                    width={300}
-                    height={200}
-                    className="object-cover rounded-t-md"
+                product={product}
+                imageUrl={imageUrl}
+                actionMenu={
+                  <ProductActions
+                    onEdit={() => openEditModal(product.id)}
+                    onDelete={() => showDeleteConfirm(product.id)}
                   />
                 }
-                actions={[
-                  <Dropdown
-                    overlay={actionMenu(product.id)}
-                    trigger={["click"]}
-                  >
-                    <Button>
-                      Actions <DownOutlined />
-                    </Button>
-                  </Dropdown>,
-                ]}
-              >
-                <Card.Meta
-                  title={product.name}
-                  description={
-                    <>
-                      <p>SKU: {product.sku}</p>
-                      <p>Categories: {product.categories}</p>
-                      <p>Price: Rp. {product.price}</p>
-                    </>
-                  }
-                />
-              </Card>
+              />
             ))}
           </div>
           <div className="flex justify-center mt-6">
@@ -241,11 +257,21 @@ const Products: React.FC = () => {
               pageSize={pageSize}
               total={totalItems}
               onChange={(page) => setCurrentPage(page)}
-              showSizeChanger={false} // Disable size changer if not needed
+              showSizeChanger={false}
             />
           </div>
         </>
       )}
+
+      <ProductFormModal
+        isVisible={isModalVisible}
+        onCancel={handleModalCancel}
+        onFinish={handleFormSubmit}
+        loading={loading}
+        editingProduct={editingProduct}
+        imageUrl={imageUrl}
+        setUploadedImage={setUploadedImage}
+      />
     </Layout>
   );
 };
